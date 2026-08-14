@@ -2,6 +2,8 @@
 
 ------------------
 This is a simple sample about google translate copy text. Select any text and copy them, it will automatically translate for you.
+Copying an **image** (e.g. a screenshot from `Win+Shift+S`) also works: the
+app OCRs it with Windows' built-in OCR engine, then translates the result.
 It is using tkinter gui. 
 It may currently working only on Windows. 
 

@@ -12,6 +12,12 @@ setup(
     install_requires=[
         "deep-translator>=1.11.4",
         "pyperclip>=1.8.2",
+        "Pillow>=12.2.0",
+        "winrt-Windows.Foundation>=3.2.1",
+        "winrt-Windows.Foundation.Collections>=3.2.1",
+        "winrt-Windows.Graphics.Imaging>=3.2.1",
+        "winrt-Windows.Storage.Streams>=3.2.1",
+        "winrt-Windows.Media.Ocr>=3.2.1",
     ],
     entry_points={
         "console_scripts": [

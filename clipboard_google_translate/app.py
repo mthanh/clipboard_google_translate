@@ -9,6 +9,12 @@ Threading model
   `_request_queue` and drains results from `_result_queue` on a
   `root.after` timer -- the only Tk-safe way to bring data back from
   another thread.
+
+UI layout
+---------
+The main window only shows the input/output boxes and a status line, to
+keep it out of the way. Every control (language, OCR toggle, log, etc.)
+lives in a separate Settings window opened via the gear button.
 """
 
 from __future__ import annotations
@@ -17,24 +23,29 @@ import queue
 import threading
 import tkinter as tk
 from dataclasses import dataclass
-from tkinter import WORD, Button, Checkbutton, Text
+from tkinter import WORD, Button, Checkbutton, Label, OptionMenu, Text, Toplevel
 from typing import NamedTuple, Optional
 
 import pyperclip
+from PIL import Image
 
 from .clipboard_watcher import ClipboardWatcher
 from .logger import TranslationLogger
+from .ocr import OcrError, OcrService
 from .text_utils import has_visible_text, remove_newlines
 from .translator import TranslationError, TranslationService
 
 RESULT_POLL_MS = 50
 EDIT_POLL_MS = 300
 LANGUAGES = (("VI", "vi"), ("JA", "ja"), ("EN", "en"))
-SELECTED_BUTTON_BG = "#cfe8ff"
 
 
 class TranslationRequest(NamedTuple):
-    source_text: str
+    """Either `source_text` or `image` is set -- an image is OCR'd into
+    source_text by the worker thread before translation."""
+
+    source_text: Optional[str] = None
+    image: Optional[Image.Image] = None
 
 
 @dataclass
@@ -50,27 +61,38 @@ class TranslatorApp:
 
         self.translator = TranslationService()
         self.logger = TranslationLogger()
+        self.ocr = OcrService()
 
         self._dest_lang = "vi"
         self._last_source = ""
         self._last_result = ""
         self._last_input_seen = ""
+        self._settings_window: Optional[Toplevel] = None
 
-        # Plain bool, not tk.BooleanVar: the worker thread reads/writes this
-        # flag, and Tk variables -- like widgets -- aren't thread-safe.
-        # `_strip_pdf_newlines_var` below is the checkbox's own display
-        # state; `_poll_results` keeps it mirroring this flag on the main
-        # thread.
+        # Plain values, not tk.Variables: the watcher/worker threads read
+        # these flags, and Tk variables -- like widgets -- aren't
+        # thread-safe. The matching `*_var` is the checkbox's own display
+        # state; `_poll_results` keeps it mirroring the plain flag on the
+        # main thread.
         self._strip_pdf_newlines = True
         self._strip_pdf_newlines_var = tk.BooleanVar(value=True)
+        self._ocr_enabled = True
+        self._ocr_enabled_var = tk.BooleanVar(value=True)
+
+        self._busy_event = threading.Event()
+        self._status_var = tk.StringVar()
 
         self._request_queue: "queue.Queue[Optional[TranslationRequest]]" = queue.Queue()
         self._result_queue: "queue.Queue[TranslationResult]" = queue.Queue()
 
         self._build_widgets()
+        self._update_status()
         self._update_title()
 
-        self._watcher = ClipboardWatcher(on_change=self._on_clipboard_change)
+        self._watcher = ClipboardWatcher(
+            on_text_change=self._on_clipboard_text_change,
+            on_image_change=self._on_clipboard_image_change,
+        )
         self._worker = threading.Thread(
             target=self._translation_worker_loop, name="TranslationWorker", daemon=True
         )
@@ -82,50 +104,78 @@ class TranslatorApp:
     def _build_widgets(self) -> None:
         root = self.root
 
+        top_bar = tk.Frame(root)
+        top_bar.grid(row=0, column=0, columnspan=200, sticky=tk.W)
+        Button(top_bar, text="⚙ Settings", command=self._open_settings, font=("NSimSun", 11)).pack(
+            side=tk.LEFT, padx=(0, 8)
+        )
+        Label(top_bar, textvariable=self._status_var, font=("NSimSun", 11)).pack(side=tk.LEFT)
+
         self.input_text = Text(width=35, height=15, wrap=WORD, font=("Arial", 11))
         self.input_text.grid(row=1, column=0, pady=0, padx=0, columnspan=100, sticky=tk.W)
 
         self.output_text = Text(width=35, height=15, wrap=WORD, font=("Arial", 11))
         self.output_text.grid(row=1, column=101, columnspan=100, pady=0, padx=0, sticky=tk.W)
 
-        self._lang_buttons: dict[str, Button] = {}
-        self._default_button_bg: Optional[str] = None
-        for col, (label, code) in enumerate(LANGUAGES):
-            btn = Button(root, text=label, command=lambda c=code: self._set_dest_lang(c))
-            btn.config(font=("NSimSun", 11))
-            btn.grid(row=0, column=col, sticky=tk.W)
-            self._lang_buttons[code] = btn
-            if self._default_button_bg is None:
-                self._default_button_bg = btn.cget("bg")
-        self._highlight_selected_lang()
+    def _open_settings(self) -> None:
+        if self._settings_window is not None and self._settings_window.winfo_exists():
+            self._settings_window.lift()
+            self._settings_window.focus_force()
+            return
 
-        Button(root, text="Save_Log", command=self._save_log, font=("NSimSun", 11)).grid(
-            row=0, column=3, sticky=tk.W
-        )
-        Button(root, text="Open_Log", command=self.logger.open_folder, font=("NSimSun", 11)).grid(
-            row=0, column=4, sticky=tk.W
+        win = Toplevel(self.root)
+        win.title("Settings")
+        win.resizable(False, False)
+        self._settings_window = win
+
+        font = ("NSimSun", 11)
+        pad = {"padx": 10, "pady": (10, 0), "sticky": tk.W}
+
+        Label(win, text="Dest. language:", font=font).grid(row=0, column=0, **pad)
+        lang_var = tk.StringVar(value=self._dest_lang)
+        OptionMenu(win, lang_var, *(code for _, code in LANGUAGES), command=self._set_dest_lang).grid(
+            row=0, column=1, padx=10, pady=(10, 0), sticky=tk.W
         )
 
-        Button(root, text="Copy_Result", command=self._copy_result_to_clipboard, font=("NSimSun", 11)).grid(
-            row=0, column=101, sticky=tk.W
-        )
-        Button(root, text="CLEAR", command=self._clear_input, font=("NSimSun", 11)).grid(
-            row=0, column=102, sticky=tk.W
-        )
         Checkbutton(
-            root,
+            win,
+            text="Translate images (OCR)",
+            variable=self._ocr_enabled_var,
+            command=self._on_toggle_ocr_enabled,
+            font=font,
+        ).grid(row=1, column=0, columnspan=2, **pad)
+
+        Checkbutton(
+            win,
             text="REMOVE_ENTER",
             variable=self._strip_pdf_newlines_var,
             command=self._on_toggle_strip_newlines,
-            font=("NSimSun", 11),
-        ).grid(row=0, column=103, sticky=tk.W)
+            font=font,
+        ).grid(row=2, column=0, columnspan=2, **pad)
+
+        Button(win, text="Copy_Result", command=self._copy_result_to_clipboard, font=font).grid(
+            row=3, column=0, **pad
+        )
+        Button(win, text="CLEAR", command=self._clear_input, font=font).grid(row=3, column=1, **pad)
+
+        Button(win, text="Save_Log", command=self._save_log, font=font).grid(row=4, column=0, **pad)
+        Button(win, text="Open_Log", command=self.logger.open_folder, font=font).grid(
+            row=4, column=1, **pad
+        )
+
+        tk.Frame(win, height=10).grid(row=5, column=0)
 
     # ---- clipboard / edit -> translation request --------------------------
 
-    def _on_clipboard_change(self, text: str) -> None:
+    def _on_clipboard_text_change(self, text: str) -> None:
         """Runs on the watcher thread. Must not touch Tk widgets."""
         if has_visible_text(text) and text != self._last_result:
             self._request_queue.put(TranslationRequest(source_text=text))
+
+    def _on_clipboard_image_change(self, image: Image.Image) -> None:
+        """Runs on the watcher thread. Must not touch Tk widgets."""
+        if self._ocr_enabled:
+            self._request_queue.put(TranslationRequest(image=image))
 
     def _poll_input_edits(self) -> None:
         current = self.input_text.get("1.0", "end-1c")
@@ -146,18 +196,35 @@ class TranslatorApp:
             if request is None:  # shutdown sentinel
                 return
 
-            source_text = request.source_text
-            if self._strip_pdf_newlines:
-                source_text = remove_newlines(source_text)
-                self._strip_pdf_newlines = False  # one-shot: applies to the next paste only
-                pyperclip.copy(source_text)
-                self._watcher.mark_seen(source_text)
-
+            self._busy_event.set()
             try:
-                translated = self.translator.translate_lines(source_text, self._dest_lang)
-                self._result_queue.put(TranslationResult(source_text, translated))
-            except TranslationError as exc:
-                self._result_queue.put(TranslationResult(source_text, None, error=str(exc)))
+                self._handle_request(request)
+            finally:
+                self._busy_event.clear()
+
+    def _handle_request(self, request: TranslationRequest) -> None:
+        if request.image is not None:
+            try:
+                source_text = self.ocr.recognize(request.image)
+            except OcrError as exc:
+                self._result_queue.put(TranslationResult("", None, error=f"OCR: {exc}"))
+                return
+            if not has_visible_text(source_text):
+                return
+        else:
+            source_text = request.source_text
+
+        if self._strip_pdf_newlines:
+            source_text = remove_newlines(source_text)
+            self._strip_pdf_newlines = False  # one-shot: applies to the next paste only
+            pyperclip.copy(source_text)
+            self._watcher.mark_seen(source_text)
+
+        try:
+            translated = self.translator.translate_lines(source_text, self._dest_lang)
+            self._result_queue.put(TranslationResult(source_text, translated))
+        except TranslationError as exc:
+            self._result_queue.put(TranslationResult(source_text, None, error=str(exc)))
 
     # ---- results -> UI (main thread) --------------------------------------
 
@@ -172,6 +239,7 @@ class TranslatorApp:
         # reflect that on the checkbox (main thread only touches the var).
         if self._strip_pdf_newlines_var.get() != self._strip_pdf_newlines:
             self._strip_pdf_newlines_var.set(self._strip_pdf_newlines)
+        self._update_status()
         self.root.after(RESULT_POLL_MS, self._poll_results)
 
     def _apply_result(self, result: TranslationResult) -> None:
@@ -197,25 +265,22 @@ class TranslatorApp:
         widget.delete("1.0", "end")
         widget.insert("1.0", text)
 
-    # ---- button actions -----------------------------------------------------
+    # ---- settings actions --------------------------------------------------
 
     def _on_toggle_strip_newlines(self) -> None:
         self._strip_pdf_newlines = self._strip_pdf_newlines_var.get()
 
+    def _on_toggle_ocr_enabled(self) -> None:
+        self._ocr_enabled = self._ocr_enabled_var.get()
+        self._update_status()
+
     def _set_dest_lang(self, lang_code: str) -> None:
         self._dest_lang = lang_code
-        self._highlight_selected_lang()
         self._update_title()
+        self._update_status()
         current = self.input_text.get("1.0", "end-1c")
         if has_visible_text(current):
             self._request_queue.put(TranslationRequest(source_text=current))
-
-    def _highlight_selected_lang(self) -> None:
-        for code, btn in self._lang_buttons.items():
-            if code == self._dest_lang:
-                btn.config(relief=tk.SUNKEN, bg=SELECTED_BUTTON_BG)
-            else:
-                btn.config(relief=tk.RAISED, bg=self._default_button_bg)
 
     def _copy_result_to_clipboard(self) -> None:
         pyperclip.copy(self._last_result)
@@ -230,6 +295,11 @@ class TranslatorApp:
 
     def _update_title(self) -> None:
         self.root.title(f"Translate to {self._dest_lang}; Log: {self.logger.log_name}")
+
+    def _update_status(self) -> None:
+        state = "Translating..." if self._busy_event.is_set() else "Ready"
+        ocr_state = "on" if self._ocr_enabled else "off"
+        self._status_var.set(f"→ {self._dest_lang.upper()}   |   OCR: {ocr_state}   |   {state}")
 
     # ---- lifecycle ------------------------------------------------------
 
