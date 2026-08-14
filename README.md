@@ -53,6 +53,13 @@ $ pip install deep-translator==1.11.4
 
 # A. Setup
 
+## Quick setup (Windows)
+Already have Python installed? Just double-click `setup.bat` (or run it
+from a terminal) -- it installs everything in `requirements.txt` and
+prints how to run the app when it's done.
+
+The steps below are the manual/from-scratch version of what that script does.
+
 ## 1. Install Python3.x (If python3 is not installed yet)
 
 - Check if python is installed?

@@ -105,11 +105,15 @@ class TranslatorApp:
         root = self.root
 
         top_bar = tk.Frame(root)
-        top_bar.grid(row=0, column=0, columnspan=200, sticky=tk.W)
+        top_bar.grid(row=0, column=0, columnspan=100, sticky=tk.W)
         Button(top_bar, text="⚙ Settings", command=self._open_settings, font=("NSimSun", 11)).pack(
             side=tk.LEFT, padx=(0, 8)
         )
         Label(top_bar, textvariable=self._status_var, font=("NSimSun", 11)).pack(side=tk.LEFT)
+
+        Button(
+            root, text="Copy_Result", command=self._copy_result_to_clipboard, font=("NSimSun", 11)
+        ).grid(row=0, column=101, columnspan=100, sticky=tk.E)
 
         self.input_text = Text(width=35, height=15, wrap=WORD, font=("Arial", 11))
         self.input_text.grid(row=1, column=0, pady=0, padx=0, columnspan=100, sticky=tk.W)
@@ -153,10 +157,7 @@ class TranslatorApp:
             font=font,
         ).grid(row=2, column=0, columnspan=2, **pad)
 
-        Button(win, text="Copy_Result", command=self._copy_result_to_clipboard, font=font).grid(
-            row=3, column=0, **pad
-        )
-        Button(win, text="CLEAR", command=self._clear_input, font=font).grid(row=3, column=1, **pad)
+        Button(win, text="CLEAR", command=self._clear_input, font=font).grid(row=3, column=0, **pad)
 
         Button(win, text="Save_Log", command=self._save_log, font=font).grid(row=4, column=0, **pad)
         Button(win, text="Open_Log", command=self.logger.open_folder, font=font).grid(
