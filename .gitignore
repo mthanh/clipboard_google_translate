@@ -152,6 +152,9 @@ media/save2/MODE2
 tmp
 tmp.*
 
+# translation CSV logs written at runtime
+clipboard_google_translate/LOG/
+
 
 
 

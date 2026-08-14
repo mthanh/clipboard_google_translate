@@ -34,10 +34,17 @@ It may currently working only on Windows.
 
 
 ## Note : Translate google
+Older versions of this project used `googletrans==3.1.0a0`, which broke
+often (`NoneType object has no attribute group`) whenever Google tweaked
+its translate endpoint:
 https://stackoverflow.com/questions/52455774/googletrans-stopped-working-with-error-nonetype-object-has-no-attribute-group
 
+The app now uses [`deep-translator`](https://github.com/nidhaloff/deep-translator)'s
+`GoogleTranslator`, which talks to the same free public endpoint (no API
+key needed) but is actively maintained.
+
 ```sh
-$ pip install googletrans==3.1.0a0
+$ pip install deep-translator==1.11.4
 ```
 
 
@@ -83,18 +90,19 @@ $ pip3 install -r requirements.txt
 $ pipreqs . --force
 ```
 
-## 4. Install setup from setup.py 
+## 4. Install setup from setup.py (optional, for a `clipboard-google-translate` command)
 ```sh
 $ cd <Path to Project>
-$ python3 setup.py install
+$ pip3 install -e .
 ```
 
 
 # B. Run
 ## 5. Run and build
 1. run by double click main.exe inside dist. (need to do 6. first)
-2. using cmd "python3 PATH/main.py" 
-3. build by using pycharm, eclipse or something else
+2. `python3 run.py` (from the project root)
+3. if installed via step 4 above: `clipboard-google-translate`
+4. build by using pycharm, eclipse or something else
 
 ## 6. Deploy to application
 ```sh
@@ -104,10 +112,11 @@ $ cd <Path to Project>
 $ rm -rf build/ dist/
 
 # build
-$ pyinstaller <Path to src>/main.py
+$ pyinstaller run.py
+```
 
-# or
-$ pyinstaller pano_app.spec
-# or
-$ yes | pyinstaller pano_app.spec
+## 7. Run tests
+```sh
+$ pip3 install -r requirements-dev.txt
+$ pytest
 ```
