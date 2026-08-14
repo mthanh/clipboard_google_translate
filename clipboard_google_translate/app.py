@@ -78,6 +78,8 @@ class TranslatorApp:
         self._strip_pdf_newlines_var = tk.BooleanVar(value=True)
         self._ocr_enabled = True
         self._ocr_enabled_var = tk.BooleanVar(value=True)
+        self._overwrite_clipboard = False
+        self._overwrite_clipboard_var = tk.BooleanVar(value=False)
 
         self._busy_event = threading.Event()
         self._status_var = tk.StringVar()
@@ -175,14 +177,22 @@ class TranslatorApp:
             font=font,
         ).grid(row=2, column=0, columnspan=2, **pad)
 
-        Button(win, text="CLEAR", command=self._clear_input, font=font).grid(row=3, column=0, **pad)
+        Checkbutton(
+            win,
+            text="Overwrite clipboard with result",
+            variable=self._overwrite_clipboard_var,
+            command=self._on_toggle_overwrite_clipboard,
+            font=font,
+        ).grid(row=3, column=0, columnspan=2, **pad)
 
-        Button(win, text="Save_Log", command=self._save_log, font=font).grid(row=4, column=0, **pad)
+        Button(win, text="CLEAR", command=self._clear_input, font=font).grid(row=4, column=0, **pad)
+
+        Button(win, text="Save_Log", command=self._save_log, font=font).grid(row=5, column=0, **pad)
         Button(win, text="Open_Log", command=self.logger.open_folder, font=font).grid(
-            row=4, column=1, **pad
+            row=5, column=1, **pad
         )
 
-        tk.Frame(win, height=10).grid(row=5, column=0)
+        tk.Frame(win, height=10).grid(row=6, column=0)
 
     # ---- clipboard / edit -> translation request --------------------------
 
@@ -222,7 +232,8 @@ class TranslatorApp:
                 self._busy_event.clear()
 
     def _handle_request(self, request: TranslationRequest) -> None:
-        if request.image is not None:
+        from_image = request.image is not None
+        if from_image:
             try:
                 source_text = self.ocr.recognize(request.image)
             except OcrError as exc:
@@ -236,8 +247,9 @@ class TranslatorApp:
         if self._strip_pdf_newlines:
             source_text = remove_newlines(source_text)
             self._strip_pdf_newlines = False  # one-shot: applies to the next paste only
-            pyperclip.copy(source_text)
-            self._watcher.mark_seen(source_text)
+            if self._overwrite_clipboard:
+                pyperclip.copy(source_text)
+                self._watcher.mark_seen(source_text)
 
         try:
             translated = self.translator.translate_lines(source_text, self._dest_lang)
@@ -273,8 +285,9 @@ class TranslatorApp:
         self._last_source = result.source_text
         self._last_result = result.translated_text or ""
 
-        pyperclip.copy(self._last_result)
-        self._watcher.mark_seen(self._last_result)
+        if self._overwrite_clipboard:
+            pyperclip.copy(self._last_result)
+            self._watcher.mark_seen(self._last_result)
 
         self.root.call("wm", "attributes", ".", "-topmost", "1")
         self.root.after_idle(self.root.call, "wm", "attributes", ".", "-topmost", False)
@@ -292,6 +305,9 @@ class TranslatorApp:
     def _on_toggle_ocr_enabled(self) -> None:
         self._ocr_enabled = self._ocr_enabled_var.get()
         self._update_status()
+
+    def _on_toggle_overwrite_clipboard(self) -> None:
+        self._overwrite_clipboard = self._overwrite_clipboard_var.get()
 
     def _set_dest_lang(self, lang_code: str) -> None:
         self._dest_lang = lang_code
