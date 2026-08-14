@@ -155,6 +155,9 @@ tmp.*
 # translation CSV logs written at runtime
 clipboard_google_translate/LOG/
 
+# user settings (language, toggles, window size) written at runtime
+clipboard_google_translate/settings.json
+
 
 
 
