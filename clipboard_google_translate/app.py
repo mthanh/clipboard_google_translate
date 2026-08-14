@@ -104,22 +104,40 @@ class TranslatorApp:
     def _build_widgets(self) -> None:
         root = self.root
 
-        top_bar = tk.Frame(root)
-        top_bar.grid(row=0, column=0, columnspan=100, sticky=tk.W)
-        Button(top_bar, text="⚙ Settings", command=self._open_settings, font=("NSimSun", 11)).pack(
-            side=tk.LEFT, padx=(0, 8)
-        )
-        Label(top_bar, textvariable=self._status_var, font=("NSimSun", 11)).pack(side=tk.LEFT)
+        # Three real columns -- left box / gutter / right box -- weighted
+        # 49/2/49 so the split stays an even 50/50 with a visible gap as
+        # the window resizes. (Spanning a widget across many dummy
+        # columns, as the original layout did, makes Tk's grid split the
+        # extra space unevenly -- a single real column per side is what
+        # actually keeps both boxes the same width.)
+        root.columnconfigure(0, weight=49)
+        root.columnconfigure(1, weight=2, minsize=12)
+        root.columnconfigure(2, weight=49)
+        root.rowconfigure(1, weight=1)
+
+        # One frame spanning all 3 columns, not just column 0 -- otherwise
+        # the status text's width becomes column 0's minimum width and
+        # throws off the 49/2/49 split versus column 2 (which only has
+        # the short Copy_Result button).
+        top_row = tk.Frame(root)
+        top_row.grid(row=0, column=0, columnspan=3, sticky=tk.EW)
+
+        left_group = tk.Frame(top_row)
+        left_group.pack(side=tk.LEFT)
+        Button(
+            left_group, text="⚙ Settings", command=self._open_settings, font=("NSimSun", 11)
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        Label(left_group, textvariable=self._status_var, font=("NSimSun", 11)).pack(side=tk.LEFT)
 
         Button(
-            root, text="Copy_Result", command=self._copy_result_to_clipboard, font=("NSimSun", 11)
-        ).grid(row=0, column=101, columnspan=100, sticky=tk.E)
+            top_row, text="Copy_Result", command=self._copy_result_to_clipboard, font=("NSimSun", 11)
+        ).pack(side=tk.RIGHT)
 
         self.input_text = Text(width=35, height=15, wrap=WORD, font=("Arial", 11))
-        self.input_text.grid(row=1, column=0, pady=0, padx=0, columnspan=100, sticky=tk.W)
+        self.input_text.grid(row=1, column=0, pady=0, padx=0, sticky=tk.NSEW)
 
         self.output_text = Text(width=35, height=15, wrap=WORD, font=("Arial", 11))
-        self.output_text.grid(row=1, column=101, columnspan=100, pady=0, padx=0, sticky=tk.W)
+        self.output_text.grid(row=1, column=2, pady=0, padx=0, sticky=tk.NSEW)
 
     def _open_settings(self) -> None:
         if self._settings_window is not None and self._settings_window.winfo_exists():
